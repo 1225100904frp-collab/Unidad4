@@ -1,0 +1,72 @@
+---
+name: CI-CD RESTCONF
+
+on:
+  pull_request:
+    paths:
+      - "restconf-ejercicio04/**"
+      - ".github/workflows/restconf.yml"
+  push:
+    branches: [main]
+    paths:
+      - "restconf-ejercicio04/**"
+      - ".github/workflows/restconf.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SANDBOX_USER: ${{ secrets.SANDBOX_USER }}
+  SANDBOX_PASS: ${{ secrets.SANDBOX_PASS }}
+
+# Los pasos que tocan el switch solo corren si la variable de repositorio
+# RESTCONF_REACHABLE vale 'true' (el runner debe poder llegar al equipo).
+# Con un sandbox por VPN (IP privada) se dejan apagados y se despliega local.
+defaults:
+  run:
+    working-directory: restconf-ejercicio04
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: restconf-ejercicio04/requirements.txt
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Build - yamllint
+        run: yamllint config ../.github/workflows/restconf.yml
+      - name: Build - flake8
+        run: flake8 src tests --max-line-length 100
+      - name: Test - unitarias (sin red)
+        run: pytest -v
+      - name: Test - prueba en seco contra el switch
+        if: ${{ vars.RESTCONF_REACHABLE == 'true' }}
+        run: python src/deploy.py --check
+
+  deploy:
+    needs: build-test
+    if: github.ref == 'refs/heads/main' && vars.RESTCONF_REACHABLE == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: restconf-ejercicio04/requirements.txt
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+      - name: Deploy
+        run: python src/deploy.py
+      - name: Monitor
+        run: python src/verify.py
